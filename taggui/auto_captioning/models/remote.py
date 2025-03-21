@@ -17,7 +17,7 @@ class RemoteGen(AutoCaptioningModel):
 		self.set_api_url(caption_settings['api_url'])
 		self.headers = {"Content-Type": "application/json"}
 		if caption_settings['api_key'] and len(caption_settings['api_key']) > 0:
-			self.headers.append({"Authorization": 'Bearar ' + caption_settings['api_key']})
+			self.headers.append({"Authorization": 'Bearer ' + caption_settings['api_key']})
 		super().__init__(captioning_thread_, caption_settings)
 		
 	def get_processor(self):
@@ -81,17 +81,33 @@ class RemoteGen(AutoCaptioningModel):
 		Prepares data for the API, including base64 encoding of the image.
 		"""
 
-		# Load and convert the image to base64
-		pil_image = self.load_image(image)
-		buffered = io.BytesIO()
-		pil_image.save(buffered, format="PNG")  # Use PNG for lossless encoding
-		img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+		# Kcpp API won't take any image over 50MB
+		# and Base64 takes 1/3 for encoding overhead
+		image_size_limit = (50 * 1024 * 1024) * 0.66
+
+		pil_image = self.load_image(image)            
+		png_buffer = io.BytesIO()
+		pil_image.save(png_buffer, format="PNG")
+
+		# If the PNG is too big, fall back to JPEG
+		if len(png_buffer.getvalue()) > (image_size_limit): 
+			jpeg_buffer = io.BytesIO()
+			pil_image = pil_image.convert('RGB')
+			pil_image.save(jpeg_buffer, format='JPEG', quality=95)
+			img_data = jpeg_buffer.getvalue()
+			format = "jpeg"
+
+		else:
+			img_data = png_buffer.getvalue()
+			format = "png"
+
+		img_base64 = base64.b64encode(img_data).decode("utf-8")
 		image_prompt.append({
 			"role": "user",
 			"content": [{
 				"type": "image_url",
 				"image_url": {
-					"url": "data:image/png;base64," + img_base64
+					"url": "data:image/" + format + ";base64," + img_base64
 				}
 			}]
 		})
